@@ -8,6 +8,7 @@ find_package(catkin REQUIRED COMPONENTS
   roscpp
   std_msgs
   tf
+  traj_planner
 )
 find_package(Eigen3 REQUIRED COMPONENTS system)
 

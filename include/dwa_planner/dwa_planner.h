@@ -28,6 +28,7 @@
 #include <vector>
 #include <visualization_msgs/Marker.h>
 #include <visualization_msgs/MarkerArray.h>
+#include "traj_planner/Weights.h"
 
 #include <Eigen/Dense>
 
@@ -176,7 +177,7 @@ public:
    * @brief A callback to hanldle buffering odometry messages
    */
   void odom_callback(const nav_msgs::OdometryConstPtr &msg);
-
+  void weightsCallback(const traj_planner::WeightsConstPtr &msg);
   /**
    * @brief A callback to hanldle buffering target velocity messages
    */
@@ -454,7 +455,7 @@ protected:
   ros::Publisher candidate_trajectories_pub_;
   ros::Publisher selected_trajectory_pub_;
   ros::Publisher predict_footprints_pub_;
-  ros::Publisher finish_flag_pub_;
+  ros::Publisher finish_flag_pub_, weights_pub;
   ros::Subscriber dist_to_goal_th_sub_;
   ros::Subscriber edge_on_global_path_sub_;
   ros::Subscriber footprint_sub_;
@@ -462,7 +463,7 @@ protected:
   ros::Subscriber local_map_sub_;
   ros::Subscriber odom_sub_;
   ros::Subscriber scan_sub_;
-  ros::Subscriber target_velocity_sub_;
+  ros::Subscriber target_velocity_sub_, weights_sub;
 
   geometry_msgs::Twist current_cmd_vel_;
   std::optional<geometry_msgs::PoseStamped> goal_msg_;
@@ -473,6 +474,7 @@ protected:
   std_msgs::Bool has_finished_;
 
   tf::TransformListener listener_;
+  bool in_collision_ = false; 
 };
 
 #endif  // DWA_PLANNER_DWA_PLANNER_H

@@ -6,7 +6,7 @@
     <!-- param -->
     <arg name="dwa_param" default="$(find dwa_planner)/config/dwa_param.yaml"/>
     <arg name="robot_param" default="$(find dwa_planner)/config/robot_param.yaml"/>
-    <arg name="hz" default="20"/>
+    <arg name="hz" default="50"/>
     <arg name="global_frame" default="map"/>
     <arg name="subscribe_count_th" default="10"/>
     <arg name="sleep_time_after_finish" default="0.5"/>
@@ -26,6 +26,35 @@
     <arg name="footprint" default="/footprint"/>
     <arg name="path" default="/path"/>
     <arg name="target_velocity" default="/target_velocity"/>
+
+    <arg name="arena_info_static_topic" value="/arena_info_static" />
+    <arg name="arena_info_dynamic_topic" value="/arena_info_dynamic" />
+    <arg name="ctrl_topic" value="/ctrl/agent_0" />
+
+    <arg name="playground" value = "ring_exp_v1.0" />
+    <param name="/use_sim_time" value="true"/>
+
+    <!-- run dft planner node -->
+    <node pkg="planning_integrated" type="park" name="park_0" output="screen" >
+        <rosparam file="$(find ai_agent_planner)/cfg/dynamicObs.yaml" command="load"/>
+        <param name="ego_id" type="int" value="0" />
+        <param name="agent_config_path" type="string" value="$(find playgrounds)/$(arg playground)/agent_config.json" />
+        <param name="traj_config_path" type="string" value="$(find traj_planner)/config/minco_config.pb.txt" />
+        <param name="desired_vel" value="1.0"/>
+        <param name="use_sim_state" value="true"/>
+        <param name="enable_urban" value="true"/>
+        <param name="isparking" value="true"/>
+        <param name="gain_heading_follow" value="0.4"/>
+        <param name="gain_heading_y_correction" value="0.6"/>
+        <remap from="~arena_info_static" to="$(arg arena_info_static_topic)"/>
+        <remap from="~arena_info_dynamic" to="$(arg arena_info_dynamic_topic)"/>
+        <remap from="~ctrl" to="$(arg ctrl_topic)"/>
+        <!-- <remap from="/odom" to="/ranger_base_node/odom"/>     -->
+        <remap from="/cmd_vel" to="/not_used"/>
+        <remap from="/using_weights" to="/not_used1"/>
+        <!-- <remap from="/set_weights" to="/not_used2"/> -->
+
+    </node>
 
     <!-- run dwa_planner node -->
     <node pkg="dwa_planner" type="dwa_planner" name="dwa_planner" ns="$(arg ns)">

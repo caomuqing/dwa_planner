@@ -22,6 +22,7 @@ DWAPlanner::DWAPlanner(void)
   selected_trajectory_pub_ = local_nh_.advertise<visualization_msgs::Marker>("selected_trajectory", 1);
   predict_footprints_pub_ = local_nh_.advertise<visualization_msgs::MarkerArray>("predict_footprints", 1);
   finish_flag_pub_ = local_nh_.advertise<std_msgs::Bool>("finish_flag", 1);
+  weights_pub = local_nh_.advertise<traj_planner::Weights>("/using_weights", 1);
 
   dist_to_goal_th_sub_ = nh_.subscribe("/dist_to_goal_th", 1, &DWAPlanner::dist_to_goal_th_callback, this);
   edge_on_global_path_sub_ = nh_.subscribe("/path", 1, &DWAPlanner::edge_on_global_path_callback, this);
@@ -31,6 +32,7 @@ DWAPlanner::DWAPlanner(void)
   odom_sub_ = nh_.subscribe("/odom", 1, &DWAPlanner::odom_callback, this);
   scan_sub_ = nh_.subscribe("/scan", 1, &DWAPlanner::scan_callback, this);
   target_velocity_sub_ = nh_.subscribe("/target_velocity", 1, &DWAPlanner::target_velocity_callback, this);
+  weights_sub = nh_.subscribe("/set_weights", 1, &DWAPlanner::weightsCallback, this);
 
   if (!use_footprint_)
     footprint_ = geometry_msgs::PolygonStamped();
@@ -94,6 +96,7 @@ void DWAPlanner::goal_callback(const geometry_msgs::PoseStampedConstPtr &msg)
     {
       listener_.transformPose(
           global_frame_, ros::Time(0), goal_msg_.value(), goal_msg_.value().header.frame_id, goal_msg_.value());
+      ROS_INFO("GOTTON GOAL!");
     }
     catch (tf::TransformException ex)
     {
@@ -108,6 +111,27 @@ void DWAPlanner::scan_callback(const sensor_msgs::LaserScanConstPtr &msg)
     create_obs_list(*msg);
   scan_not_subscribe_count_ = 0;
   scan_updated_ = true;
+
+  int i;
+  double lsr_len=msg->ranges.size();
+  double lsr_angle_inc=msg->angle_increment;
+  double lsr_angle_min=msg->angle_min;
+  bool collision = false;
+  for (i=0;i<(lsr_len-1);i++){
+    double angle=((double)(i)*lsr_angle_inc)+lsr_angle_min;
+
+    double x = msg->ranges[i] * cos(angle);
+    double y = msg->ranges[i] * sin(angle);
+
+    double half_width = 0.6 / 2.0;
+    double half_length = 0.85 / 2.0;
+
+    // Check if the point (x, y) lies within the UGV's bounding box
+    if (x >= -half_length && x <= half_length && y >= -half_width && y <= half_width) {
+        collision = true;
+    }
+  }
+  in_collision_ = collision;  
 }
 
 void DWAPlanner::local_map_callback(const nav_msgs::OccupancyGridConstPtr &msg)
@@ -123,6 +147,14 @@ void DWAPlanner::odom_callback(const nav_msgs::OdometryConstPtr &msg)
   current_cmd_vel_ = msg->twist.twist;
   odom_not_subscribe_count_ = 0;
   odom_updated_ = true;
+}
+
+void DWAPlanner::weightsCallback(const traj_planner::WeightsConstPtr &msg)
+{
+  to_goal_cost_gain_ = msg->wei_obs;
+  obs_cost_gain_ = msg->wei_surround;
+  speed_cost_gain_ = msg->wei_feas;
+  path_cost_gain_ = msg->wei_sqrvar;
 }
 
 void DWAPlanner::target_velocity_callback(const geometry_msgs::TwistConstPtr &msg)
@@ -308,6 +340,22 @@ void DWAPlanner::process(void)
     geometry_msgs::Twist cmd_vel;
     if (can_move())
       cmd_vel = calc_cmd_vel();
+
+    traj_planner::Weights weights_msg;
+    weights_msg.header.stamp = ros::Time::now();
+    weights_msg.wei_obs = to_goal_cost_gain_;
+    weights_msg.wei_surround = obs_cost_gain_;
+    weights_msg.wei_feas = speed_cost_gain_;
+    weights_msg.wei_sqrvar = path_cost_gain_;
+    weights_msg.wei_time = 0.0;
+    weights_msg.wei_jerk = 0.0;
+    weights_msg.planning_success = 0;
+    weights_msg.tracking_error = 0.0;
+    weights_msg.collision = in_collision_;
+    weights_msg.reached = has_reached_;
+
+    weights_pub.publish(weights_msg);    
+
     velocity_pub_.publish(cmd_vel);
     finish_flag_pub_.publish(has_finished_);
     if (has_finished_.data)
@@ -463,8 +511,10 @@ bool DWAPlanner::check_collision(const std::vector<State> &traj)
 DWAPlanner::Window DWAPlanner::calc_dynamic_window(void)
 {
   Window window;
-  window.min_velocity_ = std::max((current_cmd_vel_.linear.x - max_deceleration_ * sim_period_), min_velocity_);
-  window.max_velocity_ = std::min((current_cmd_vel_.linear.x + max_acceleration_ * sim_period_), target_velocity_);
+  Eigen::Vector2d velocity(current_cmd_vel_.linear.x, current_cmd_vel_.linear.y);
+  double speed = velocity.norm();
+  window.min_velocity_ = std::max((speed - max_deceleration_ * sim_period_), min_velocity_);
+  window.max_velocity_ = std::min((speed + max_acceleration_ * sim_period_), target_velocity_);
   window.min_yawrate_ = std::max((current_cmd_vel_.angular.z - max_d_yawrate_ * sim_period_), -max_yawrate_);
   window.max_yawrate_ = std::min((current_cmd_vel_.angular.z + max_d_yawrate_ * sim_period_), max_yawrate_);
   return window;
@@ -615,7 +665,42 @@ geometry_msgs::PolygonStamped DWAPlanner::move_footprint(const State &target_pos
   geometry_msgs::PolygonStamped footprint;
   if (use_footprint_)
   {
-    footprint = footprint_.value();
+    footprint.header.frame_id = "base_link"; // Replace with your frame ID
+    footprint.header.stamp = ros::Time::now();
+
+    // Define the length and width of the rectangle
+    double length = 0.75;
+    double width = 0.5;
+
+    // Define the four corners of the rectangle
+    geometry_msgs::Point32 p1, p2, p3, p4;
+
+    // Bottom-left corner
+    p1.x = -length / 2.0;
+    p1.y = -width / 2.0;
+    p1.z = 0.0;
+
+    // Bottom-right corner
+    p2.x = length / 2.0;
+    p2.y = -width / 2.0;
+    p2.z = 0.0;
+
+    // Top-right corner
+    p3.x = length / 2.0;
+    p3.y = width / 2.0;
+    p3.z = 0.0;
+
+    // Top-left corner
+    p4.x = -length / 2.0;
+    p4.y = width / 2.0;
+    p4.z = 0.0;
+
+    // Add the points to the polygon
+    footprint.polygon.points.push_back(p1);
+    footprint.polygon.points.push_back(p2);
+    footprint.polygon.points.push_back(p3);
+    footprint.polygon.points.push_back(p4);
+    footprint.polygon.points.push_back(p1); 
   }
   else
   {
